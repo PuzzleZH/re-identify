@@ -87,6 +87,7 @@ def loss_calc(anchor, pos, neg, margin):
     triplet_loss = nn.TripletMarginLoss(margin=margin)
     return triplet_loss(anchor, pos, neg)
 
+
 ### main
 if __name__ == '__main__':
     device = GPU_ID
@@ -122,8 +123,8 @@ if __name__ == '__main__':
         # adjust learning rate if needed
         # adjust_learning_rate(optimizer, i_iter)
         # load data
-        _, batch = dataloader_iter.__next__()
-        anchor, pos, neg = batch
+        _, data = dataloader_iter.__next__()
+        anchor, pos, neg = data
         # propagate
         anchor_out, pos_out, neg_out = model(anchor.cuda(device), pos.cuda(device), neg.cuda(device))
         # loss
