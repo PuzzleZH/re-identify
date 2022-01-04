@@ -18,10 +18,12 @@ OUT = 64
 GPU_ID = 0
 LEARNING_RATE = 1e-4
 MOMENTUM = 0.0005
-WEIGHT_DECAY = 0.9 
+WEIGHT_DECAY = 0.9
 BATCH_SIZE = 32 
 MARGIN = 0.5
 ITERS = 120000
+
+MAX_ITERS = 1200000
 NUM_WORKERS = 0
 
 # save
@@ -33,19 +35,21 @@ class Dataset(torch.utils.data.Dataset):
     
     def __init__(self):
         with open('train/train_list.txt') as f:
-            items = [[line.strip().split()[0], int(line.strip().split()[1])] for line in f.readlines()]
-        self.data = {}
-        for item in items:
-            if item[1] not in self.data:
-                self.data[item[1]] = [item[0]]
+            self.data = [[line.strip().split()[0], int(line.strip().split()[1])] for line in f.readlines()]
+        self.ref = {}
+        for item in self.data:
+            if item[1] not in self.ref:
+                self.ref[item[1]] = [item[0]]
             else:
-                self.data[item[1]].append(item[0])
-
+                self.ref[item[1]].append(item[0])
+        self.data = self.data * int(np.ceil(float(MAX_ITERS) / len(self.data)))
+        
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx): 
-        pos_list = self.data[idx]
+    def __getitem__(self, idx):
+        anchor_idx = self.data[idx][1] 
+        pos_list = self.ref[anchor_idx].copy()
         # anchor
         anchor_pth = random.choice(pos_list)
         # remove anchor from the list
@@ -56,10 +60,10 @@ class Dataset(torch.utils.data.Dataset):
         else:
             pos_pth = anchor_pth
         # neg list
-        neg_idx_list = list(self.data.keys())
-        neg_idx_list.remove(idx)
+        neg_idx_list = list(self.ref.keys())
+        neg_idx_list.remove(anchor_idx)
         neg_idx = random.choice(neg_idx_list)
-        neg_list = self.data[neg_idx]
+        neg_list = self.ref[neg_idx]
         # neg
         neg_pth = random.choice(neg_list)
         # load data
@@ -85,6 +89,41 @@ class Model(nn.Module):
         neg_out = self.relu(neg_out)
         return anchor_out, pos_out, neg_out
 
+### generate triplets
+# def gen_triplets():
+#     with open('train/train_list.txt') as f:
+#         items = [[line.strip().split()[0], int(line.strip().split()[1])] for line in f.readlines()]
+#     data = {}
+#     for item in items:
+#         if item[1] not in data:
+#             data[item[1]] = [item[0]]
+#         else:
+#             data[item[1]].append(item[0])
+#     triplets = []
+#     for ped in tqdm(data.keys()):
+#         neg_idx_lst = list(data.keys())
+#         neg_idx_lst.remove(ped)
+#         negs = []
+#         for neg in neg_idx_lst:
+#             negs.extend(data[neg])
+#         if len(data[ped]) == 1:
+#             anchor = data[ped][0]
+#             pos = data[ped][0]
+#             for neg in negs:
+#                 triplets.append(f'{anchor},{pos},{neg}')
+#         else:
+#             for anchor in data[ped]:
+#                 poss = data[ped]
+#                 poss.remove(anchor)
+#                 for pos in poss:
+#                     for neg in negs:
+#                         triplets.append(f'{anchor},{pos},{neg}')
+#     # save
+#     with open('triplets.csv', 'w') as f:
+#         for triplet in triplets:
+#             f.write(triplet+'\n')
+#     return
+
 ### training objective
 def loss_calc(anchor, pos, neg, margin):
     triplet_loss = nn.TripletMarginLoss(margin=margin)
@@ -92,7 +131,7 @@ def loss_calc(anchor, pos, neg, margin):
 
 
 ### adaptive mining
-def ada_mine(model, dataloader_iter) -> Tuple[Tensor, Tensor, Tensor, float]:
+def ada_mine(model, dataloader_iter, device) -> Tuple[Tensor, Tensor, Tensor, float]:
     # record time   
     start = time.time()
 
@@ -121,8 +160,9 @@ def ada_mine(model, dataloader_iter) -> Tuple[Tensor, Tensor, Tensor, float]:
     
     ada_t = time.time() - start
     return anchor, pos, neg, ada_t
+
 ### main
-if __name__ == '__main__':
+def main():
     device = GPU_ID
 
     # dataset
@@ -158,7 +198,7 @@ if __name__ == '__main__':
         # load data
         _, data = dataloader_iter.__next__()
         # adaptive mining
-        anchor, pos, neg, ada_t = ada_mine(model, dataloader_iter)
+        anchor, pos, neg, ada_t = ada_mine(model, dataloader_iter, device)
         # propagate
         anchor_out, pos_out, neg_out = model(anchor.cuda(device), pos.cuda(device), neg.cuda(device))
         # loss
@@ -173,4 +213,6 @@ if __name__ == '__main__':
         if i_iter % SAVE_EVERY == 0 and i_iter:
             torch.save(model.state_dict(), f'{SNAPSHOT}/model_{i_iter}.pth')
         sys.stdout.flush()
-    
+
+if __name__ == '__main__':
+    main()
