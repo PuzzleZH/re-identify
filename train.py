@@ -12,7 +12,8 @@ import time
 ### global settings
 # model
 IN = 2048
-OUT = 64
+MID = 64
+OUT = 2048
 
 # train
 GPU_ID = 0
@@ -75,54 +76,18 @@ class Dataset(torch.utils.data.Dataset):
 ### model
 class Model(nn.Module):
 
-    def __init__(self, out):
+    def __init__(self, mid, out):
         super(Model, self).__init__()
-        self.linear = nn.Linear(IN, out)
+        self.linear = nn.Linear(IN, mid)
+        self.regen = nn.Linear(mid, out)
         self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, anchor, pos, neg):
-        anchor_out = self.linear(anchor)
-        anchor_out = self.relu(anchor_out)
-        pos_out = self.linear(pos)
-        pos_out = self.relu(pos_out)
-        neg_out = self.linear(neg)
-        neg_out = self.relu(neg_out)
-        return anchor_out, pos_out, neg_out
-
-### generate triplets
-# def gen_triplets():
-#     with open('train/train_list.txt') as f:
-#         items = [[line.strip().split()[0], int(line.strip().split()[1])] for line in f.readlines()]
-#     data = {}
-#     for item in items:
-#         if item[1] not in data:
-#             data[item[1]] = [item[0]]
-#         else:
-#             data[item[1]].append(item[0])
-#     triplets = []
-#     for ped in tqdm(data.keys()):
-#         neg_idx_lst = list(data.keys())
-#         neg_idx_lst.remove(ped)
-#         negs = []
-#         for neg in neg_idx_lst:
-#             negs.extend(data[neg])
-#         if len(data[ped]) == 1:
-#             anchor = data[ped][0]
-#             pos = data[ped][0]
-#             for neg in negs:
-#                 triplets.append(f'{anchor},{pos},{neg}')
-#         else:
-#             for anchor in data[ped]:
-#                 poss = data[ped]
-#                 poss.remove(anchor)
-#                 for pos in poss:
-#                     for neg in negs:
-#                         triplets.append(f'{anchor},{pos},{neg}')
-#     # save
-#     with open('triplets.csv', 'w') as f:
-#         for triplet in triplets:
-#             f.write(triplet+'\n')
-#     return
+    
+    def forward(self, input):
+        out = self.linear(input)
+        out = self.relu(out)
+        out = self.regen(out)
+        out = self.relu(out)        
+        return out
 
 ### training objective
 def loss_calc(anchor, pos, neg, margin):
@@ -144,7 +109,10 @@ def ada_mine(model, dataloader_iter, device) -> Tuple[Tensor, Tensor, Tensor, fl
             _, data = dataloader_iter.__next__()
             anchor, pos, neg = data
             # propagate
-            anchor_out, pos_out, neg_out = model(anchor.cuda(device), pos.cuda(device), neg.cuda(device))
+            anchor_out = model(anchor.cuda(device))
+            pos_out = model(pos.cuda(device))
+            neg_out = model(neg.cuda(device))
+            
             if loss_calc(anchor_out, pos_out, neg_out, margin=MARGIN) > 0:
                 anchor_lst.append(anchor)
                 pos_lst.append(pos)
@@ -177,7 +145,7 @@ def main():
     dataloader_iter = enumerate(dataloader)
     
     # create model & start training
-    model = Model(OUT)
+    model = Model(MID, OUT)
     model.train()
     model.to(device)
     # cudnn.benchmark = True
@@ -200,7 +168,9 @@ def main():
         # adaptive mining
         anchor, pos, neg, ada_t = ada_mine(model, dataloader_iter, device)
         # propagate
-        anchor_out, pos_out, neg_out = model(anchor.cuda(device), pos.cuda(device), neg.cuda(device))
+        anchor_out = model(anchor.cuda(device))
+        pos_out = model(pos.cuda(device))
+        neg_out = model(neg.cuda(device))
         # loss
         loss = loss_calc(anchor_out, pos_out, neg_out, margin=MARGIN)
         loss.backward()
